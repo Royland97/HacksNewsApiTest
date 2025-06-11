@@ -1,5 +1,6 @@
 import httpx
 from selectolax.parser import HTMLParser
+from asyncio import gather
 
 BASE_URL = "https://news.ycombinator.com/news?p={}"
 
@@ -13,10 +14,11 @@ def parse_page(html: str) -> list:
     tree = HTMLParser(html)
     articles = []
 
-    rows = tree.css("tr.athing")
-    subtexts = tree.css("td.subtext")
+    rows = tree.css("tr.athing") # Main post rows
+    subtexts = tree.css("td.subtext") # Subtext rows that contain points, author, and comments
 
     for row, sub in zip(rows, subtexts):
+        # Find the story link and title
         title_node = row.css_first("a.storylink") or row.css_first("span.titleline a")
         if not title_node:
             continue
@@ -24,17 +26,21 @@ def parse_page(html: str) -> list:
         title = title_node.text(strip=True)
         url = title_node.attributes.get("href", "")
         if url.startswith("item?"):
-            url = f"https://news.ycombinator.com/{url}"
+            url = f"https://news.ycombinator.com/{url}" # Convert relative links to absolute
 
+        #Extract points if available
         points_node = sub.css_first("span.score")
         points = int(points_node.text().split()[0]) if points_node else 0
 
+        # Extract author if available
         author_node = sub.css_first("a.hnuser")
         sent_by = author_node.text(strip=True) if author_node else "unknown"
 
+        # Extract relative publish time
         time_node = sub.css_first("span.age")
         published = time_node.text(strip=True) if time_node else "unknown"
 
+        # Extract number of comments
         comments = 0
         comment_links = sub.css("a")
         if comment_links:
@@ -46,6 +52,7 @@ def parse_page(html: str) -> list:
                 except ValueError:
                     comments = 0
 
+        # Add the article to the results list
         articles.append({
             "title": title,
             "url": url,
@@ -58,10 +65,14 @@ def parse_page(html: str) -> list:
     return articles
 
 async def fetch_page(pages: int = 1) -> list:
-    from asyncio import gather
+    # Create async fetch tasks for all requested pages
     html_tasks = [fetch_page_html(i) for i in range(1, pages + 1)]
+
+    # Fetch all pages concurrently
     html_pages = await gather(*html_tasks)
     all_articles = []
+
+    # Parse each page and combine all articles into a single list
     for html in html_pages:
         all_articles.extend(parse_page(html))
     return all_articles
