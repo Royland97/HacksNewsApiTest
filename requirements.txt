@@ -1,0 +1,7 @@
+fastapi
+httpx
+selectolax
+uvicorn
+pytest
+pytest-asyncio
+cachetools
