@@ -1,16 +1,22 @@
 import httpx
 from selectolax.parser import HTMLParser
 from asyncio import gather
+from app.models import News
+from app.cache import html_cache
 
 BASE_URL = "https://news.ycombinator.com/news?p={}"
 
 async def fetch_page_html(page: int) -> str:
+    if page in html_cache:
+        return html_cache[page]
+
     async with httpx.AsyncClient() as client:
         response = await client.get(BASE_URL.format(page))
         response.raise_for_status()
+        html_cache[page] = response.text
         return response.text
 
-def parse_page(html: str) -> list:
+def parse_page(html: str) -> list[News]:
     tree = HTMLParser(html)
     articles = []
 
@@ -52,27 +58,30 @@ def parse_page(html: str) -> list:
                 except ValueError:
                     comments = 0
 
-        # Add the article to the results list
-        articles.append({
-            "title": title,
-            "url": url,
-            "points": points,
-            "author": sent_by,
-            "published": published,
-            "comments": comments
-        })
+        news_item = News(
+            title=title,
+            url=url,
+            points=points,
+            author=sent_by,
+            published=published,
+            comments=comments
+        )
+        articles.append(news_item)
 
     return articles
 
-async def fetch_page(pages: int = 1) -> list:
+async def fetch_page(pages: int = 1) -> list[News]:
+    # Determine missing pages that aren't already in cache
+    missing_pages = [i for i in range(1, pages + 1) if i not in html_cache]
+
     # Create async fetch tasks for all requested pages
-    html_tasks = [fetch_page_html(i) for i in range(1, pages + 1)]
+    html_tasks = [fetch_page_html(i) for i in missing_pages]
+    await gather(*html_tasks)
 
-    # Fetch all pages concurrently
-    html_pages = await gather(*html_tasks)
     all_articles = []
-
     # Parse each page and combine all articles into a single list
-    for html in html_pages:
+    for i in range(1, pages + 1):
+        html = html_cache[i]
         all_articles.extend(parse_page(html))
+
     return all_articles
